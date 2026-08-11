@@ -1038,4 +1038,335 @@ async function createPairingSession(
             await sendTelegramMessage(
                 chatId,
 
-                `🔐 WhatsApp Pai
+                `🔐 WhatsApp Pairing Code
+
+Number: +${phone}
+
+Code: ${code}
+
+Open WhatsApp → Linked Devices → Link a device → Link with phone number, then enter this code.
+
+⚠️ The code is private. Do not share it.`
+            );
+        }
+
+    } catch (err) {
+
+        console.error(
+            `Pairing error for +${phone}:`,
+            err
+        );
+
+        sessions.delete(
+            phone
+        );
+
+        try {
+
+            await sendTelegramMessage(
+                chatId,
+
+                `❌ Unable to generate a WhatsApp pairing code for +${phone}.`
+            );
+
+        } catch {}
+    }
+}
+
+/* =========================
+   TELEGRAM POLLING
+========================= */
+
+let telegramOffset = 0;
+
+async function pollTelegram() {
+
+    while (true) {
+
+        try {
+
+            const updates =
+                await telegram(
+                    "getUpdates",
+                    {
+                        offset:
+                            telegramOffset,
+
+                        timeout: 30
+                    }
+                );
+
+            for (
+                const update
+                of updates
+            ) {
+
+                telegramOffset =
+                    update.update_id + 1;
+
+                const message =
+                    update.message;
+
+                if (
+                    !message?.text
+                ) {
+                    continue;
+                }
+
+                const chatId =
+                    message.chat.id;
+
+                const text =
+                    message.text.trim();
+
+                /*
+                 * =========================
+                 * START
+                 * =========================
+                 */
+
+                if (
+                    text === "/start"
+                ) {
+
+                    await sendTelegramMessage(
+                        chatId,
+
+                        `🤖 WhisperBot Pairing
+
+Use:
+
+/pair 237XXXXXXXXX
+
+Example:
+
+/pair 237672334564
+
+Your WhatsApp account will be linked and a personal WhisperBot instance will start automatically.`
+                    );
+
+                    continue;
+                }
+
+                /*
+                 * =========================
+                 * PAIR
+                 * =========================
+                 */
+
+                if (
+                    text === "/pair" ||
+                    text.startsWith("/pair ")
+                ) {
+
+                    const parts =
+                        text.split(
+                            /\s+/
+                        );
+
+                    const phone =
+                        normalizePhone(
+                            parts[1]
+                        );
+
+                    if (!phone) {
+
+                        await sendTelegramMessage(
+                            chatId,
+
+                            `📌 Usage:
+
+/pair 237XXXXXXXXX
+
+Example:
+
+/pair 237672334564`
+                        );
+
+                        continue;
+                    }
+
+                    /*
+                     * Don't allow an existing
+                     * WhisperBot to be paired
+                     * again accidentally.
+                     */
+
+                    if (
+                        botProcesses.has(phone)
+                    ) {
+
+                        await sendTelegramMessage(
+                            chatId,
+
+                            `ℹ️ WhisperBot is already running for +${phone}.`
+                        );
+
+                        continue;
+                    }
+
+                    await sendTelegramMessage(
+                        chatId,
+
+                        `⏳ Preparing WhisperBot for +${phone}...\n\nA WhatsApp pairing code will be generated shortly.`
+                    );
+
+                    /*
+                     * Start the pairing process
+                     * without blocking Telegram.
+                     */
+
+                    createPairingSession(
+                        phone,
+                        chatId
+                    ).catch(
+                        async err => {
+
+                            console.error(
+                                `Pairing session error for +${phone}:`,
+                                err
+                            );
+
+                            sessions.delete(
+                                phone
+                            );
+
+                            try {
+
+                                await sendTelegramMessage(
+                                    chatId,
+
+                                    `❌ Unable to start the WhatsApp pairing session for +${phone}.`
+                                );
+
+                            } catch {}
+                        }
+                    );
+
+                    continue;
+                }
+            }
+
+        } catch (err) {
+
+            console.error(
+                "Telegram polling error:",
+                err.message
+            );
+
+            await new Promise(
+                resolve =>
+                    setTimeout(
+                        resolve,
+                        5000
+                    )
+            );
+        }
+    }
+}
+
+/* =========================
+   MAIN
+========================= */
+
+async function main() {
+
+    console.log(
+        "================================"
+    );
+
+    console.log(
+        "🤖 WhisperBot Pairing Service"
+    );
+
+    console.log(
+        "================================"
+    );
+
+    console.log(
+        `Template: ${TEMPLATE_DIR}`
+    );
+
+    console.log(
+        `Instances: ${INSTANCES_DIR}`
+    );
+
+    console.log(
+        "Telegram bot: connected"
+    );
+
+    await pollTelegram();
+}
+
+/* =========================
+   SHUTDOWN
+========================= */
+
+async function shutdown(
+    signal
+) {
+
+    console.log(
+        `\nReceived ${signal}. Shutting down...`
+    );
+
+    /*
+     * Stop pairing sockets.
+     */
+
+    for (
+        const [
+            phone,
+            session
+        ]
+        of sessions
+    ) {
+
+        try {
+
+            session.sock?.ws?.close();
+
+        } catch {}
+
+        console.log(
+            `Closed pairing socket for +${phone}`
+        );
+    }
+
+    /*
+     * Don't kill the actual WhisperBot
+     * processes here unless explicitly
+     * requested. They are independent
+     * runtime processes.
+     */
+
+    process.exit(0);
+}
+
+process.on(
+    "SIGINT",
+    () =>
+        shutdown("SIGINT")
+);
+
+process.on(
+    "SIGTERM",
+    () =>
+        shutdown("SIGTERM")
+);
+
+/* =========================
+   START
+========================= */
+
+main().catch(
+    err => {
+
+        console.error(
+            "FATAL ERROR:",
+            err
+        );
+
+        process.exit(1);
+    }
+);
