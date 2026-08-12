@@ -1,7 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
-
+const { spawn, execFileSync } = require("child_process");
 const {
     syncWhisperBotSource
 } = require("./source-sync");
@@ -90,6 +89,25 @@ function startWhisperBot(phone) {
                 recursive: true
             }
         );
+console.log(
+    `📦 Installing dependencies for +${phone}...`
+);
+
+execFileSync(
+    "npm",
+    [
+        "install",
+        "--omit=dev"
+    ],
+    {
+        cwd: instanceDir,
+        stdio: "inherit"
+    }
+);
+
+console.log(
+    `✅ Dependencies installed for +${phone}`
+);
     }
 
     /*

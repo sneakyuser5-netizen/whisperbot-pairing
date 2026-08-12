@@ -28,8 +28,31 @@ function loadCommands(dir = "./commands") {
             continue;
         }
         if (!file.endsWith(".js")) continue;
-        const command = require(path);
         commands.set(command.name, command);
+        //const command = require(path);
+//        commands.set(command.name, command);
+try {
+    const command = require(path);
+
+    if (!command?.name) {
+        console.error("⚠️ Invalid command skipped:", path);
+        continue;
+    }
+
+    commands.set(command.name, command);
+
+    if (command.aliases) {
+        for (const alias of command.aliases) {
+            commands.set(alias, command);
+        }
+    }
+
+    console.log("✅ Command loaded:", command.name);
+
+} catch (err) {
+    console.error("❌ Failed to load command:", path);
+    console.error(err.message);
+}
         if (command.aliases) {
             for (const alias of command.aliases) {
                 commands.set(alias, command);
