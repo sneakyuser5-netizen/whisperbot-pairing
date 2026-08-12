@@ -1,6 +1,5 @@
-node_modules/
-sessions/
-instances/
-whisperbot-template/.git/
-whisperbot-template/node_modules/
 .env
+instances/
+sessions/
+whisperbot-template/
+node_modules/

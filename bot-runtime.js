@@ -2,6 +2,9 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
+const {
+    syncWhisperBotSource
+} = require("./source-sync");
 const TEMPLATE_DIR =
     path.join(__dirname, "whisperbot-template");
 
@@ -28,11 +31,17 @@ function startWhisperBot(phone) {
             phone
         );
 
-    /*
-     * Create the instance from the
-     * clean WhisperBot template.
+       /*
+     * Always obtain the latest WhisperBot
+     * source before creating a new instance.
      */
     if (!fs.existsSync(instanceDir)) {
+
+        console.log(
+            `🔄 Syncing latest WhisperBot source before creating +${phone}`
+        );
+
+        syncWhisperBotSource();
 
         console.log(
             `Creating WhisperBot instance for ${phone}`

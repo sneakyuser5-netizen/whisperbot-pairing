@@ -14,7 +14,9 @@ const path = require("path");
 const {
     startWhisperBot
 } = require("./bot-runtime");
-
+const {
+    syncWhisperBotSource
+} = require("./source-sync");
 const TELEGRAM_BOT_TOKEN =
     process.env.TELEGRAM_BOT_TOKEN;
 
@@ -1282,6 +1284,11 @@ async function main() {
     console.log(
         "================================"
     );
+    console.log(
+        "🔄 Synchronizing WhisperBot source..."
+    );
+
+    syncWhisperBotSource();
 
     console.log(
         `Template: ${TEMPLATE_DIR}`
