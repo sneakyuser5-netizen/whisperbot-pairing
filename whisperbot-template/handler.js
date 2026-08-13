@@ -21,47 +21,41 @@ async function isAdmin(sock, msg) {
 
 function loadCommands(dir = "./commands") {
     const files = fs.readdirSync(dir);
+
     for (const file of files) {
         const path = `${dir}/${file}`;
+
         if (fs.statSync(path).isDirectory()) {
             loadCommands(path);
             continue;
         }
+
         if (!file.endsWith(".js")) continue;
-        commands.set(command.name, command);
-        //const command = require(path);
-//        commands.set(command.name, command);
-try {
-    const command = require(path);
 
-    if (!command?.name) {
-        console.error("⚠️ Invalid command skipped:", path);
-        continue;
-    }
+        try {
+            const command = require(path);
 
-    commands.set(command.name, command);
-
-    if (command.aliases) {
-        for (const alias of command.aliases) {
-            commands.set(alias, command);
-        }
-    }
-
-    console.log("✅ Command loaded:", command.name);
-
-} catch (err) {
-    console.error("❌ Failed to load command:", path);
-    console.error(err.message);
-}
-        if (command.aliases) {
-            for (const alias of command.aliases) {
-                commands.set(alias, command);
+            if (!command?.name) {
+                console.error("⚠️ Invalid command skipped:", path);
+                continue;
             }
+
+            commands.set(command.name, command);
+
+            if (command.aliases) {
+                for (const alias of command.aliases) {
+                    commands.set(alias, command);
+                }
+            }
+
+            console.log("✅ Command loaded:", command.name);
+
+        } catch (err) {
+            console.error("❌ Failed to load command:", path);
+            console.error(err.message);
         }
-        console.log("✅ Command loaded:", command.name);
     }
 }
-
 async function handleMessage(sock, msg) {
     const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
 
