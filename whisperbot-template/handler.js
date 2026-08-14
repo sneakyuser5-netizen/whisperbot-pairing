@@ -23,8 +23,7 @@ function loadCommands(dir = "./commands") {
     const files = fs.readdirSync(dir);
 
     for (const file of files) {
-        const path = `${dir}/${file}`;
-
+const path = require("path").resolve(dir, file);
         if (fs.statSync(path).isDirectory()) {
             loadCommands(path);
             continue;
