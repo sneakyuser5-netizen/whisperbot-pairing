@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { execFileSync } = require("child_process");
 
 const ROOT_DIR = __dirname;
@@ -10,75 +11,96 @@ const TEMPLATE_DIR =
 const REPO_URL =
     "https://github.com/sneakyuser5-netizen/The_whisperer_bot.git";
 
+function runGit(args, cwd) {
+    return execFileSync(
+        "git",
+        args,
+        {
+            cwd,
+            stdio: "inherit"
+        }
+    );
+}
+
 function syncWhisperBotSource() {
 
     console.log("================================");
     console.log("🔄 SYNCING WHISPERBOT SOURCE");
     console.log("================================");
 
+    const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "whisperbot-source-")
+    );
+
     try {
 
-        if (!fs.existsSync(TEMPLATE_DIR)) {
+        /*
+         * Always obtain a completely fresh copy of
+         * The_whisperer_bot.
+         *
+         * whisperbot-template is intentionally NOT
+         * a Git repository.
+         */
 
-            console.log(
-                "📥 Downloading latest The_whisperer_bot..."
-            );
+        console.log(
+            "📥 Downloading latest The_whisperer_bot..."
+        );
 
-            execFileSync(
-                "git",
-                [
-                    "clone",
-                    "--depth",
-                    "1",
-                    REPO_URL,
-                    TEMPLATE_DIR
-                ],
-                {
-                    stdio: "inherit"
-                }
-            );
-
-        } else {
-
-            console.log(
-                "🔄 Updating existing WhisperBot source..."
-            );
-
-            execFileSync(
-                "git",
-                [
-                    "-C",
-                    TEMPLATE_DIR,
-                    "fetch",
-                    "origin",
-                    "main",
-                    "--depth",
-                    "1"
-                ],
-                {
-                    stdio: "inherit"
-                }
-            );
-
-            execFileSync(
-                "git",
-                [
-                    "-C",
-                    TEMPLATE_DIR,
-                    "reset",
-                    "--hard",
-                    "origin/main"
-                ],
-                {
-                    stdio: "inherit"
-                }
-            );
-        }
+        runGit(
+            [
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                "main",
+                REPO_URL,
+                tempDir
+            ],
+            ROOT_DIR
+        );
 
         /*
-         * Never allow authentication/database
-         * data from the source repository to
-         * become part of a new instance.
+         * Remove the old template completely.
+         */
+
+        fs.rmSync(
+            TEMPLATE_DIR,
+            {
+                recursive: true,
+                force: true
+            }
+        );
+
+        /*
+         * Copy the freshly downloaded source into
+         * the template directory.
+         */
+
+        fs.cpSync(
+            tempDir,
+            TEMPLATE_DIR,
+            {
+                recursive: true
+            }
+        );
+
+        /*
+         * Never allow Git metadata from the source
+         * repository to become part of the template.
+         */
+
+        fs.rmSync(
+            path.join(TEMPLATE_DIR, ".git"),
+            {
+                recursive: true,
+                force: true
+            }
+        );
+
+        /*
+         * Never allow authentication/database data
+         * from the source repository to become part
+         * of a new instance.
          */
 
         fs.rmSync(
@@ -105,7 +127,7 @@ function syncWhisperBotSource() {
         );
 
         console.log(
-            "✅ WhisperBot source synchronized."
+            "✅ WhisperBot source synchronized from The_whisperer_bot."
         );
 
         return TEMPLATE_DIR;
@@ -119,6 +141,16 @@ function syncWhisperBotSource() {
         console.error(error.message);
 
         throw error;
+
+    } finally {
+
+        fs.rmSync(
+            tempDir,
+            {
+                recursive: true,
+                force: true
+            }
+        );
     }
 }
 
