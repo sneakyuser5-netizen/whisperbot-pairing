@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const {
@@ -621,9 +620,10 @@ async function createWhatsAppSocket(
                 sessions.delete(phone);
 
                 try {
+                    // Improved feedback message
                     await sendTelegramMessage(
                         session.chatId,
-                        `❌ WhatsApp session for +${phone} was rejected. The old session was removed. Send /pair ${phone} to receive a new pairing code.`
+                        `❌ WhatsApp session for +${phone} was rejected by WhatsApp (likely logged out remotely). I removed the saved session files for this instance. To link again, request a new code with /pair ${phone}. If you recently logged out from WhatsApp, re-login on your phone first before pairing.`
                     );
                 } catch {}
 
@@ -937,6 +937,12 @@ pairingInvalidated: false
         /*
          * If the account is already registered,
          * don't request a pairing code.
+         *
+         * IMPORTANT:
+         * We must validate that the stored credentials actually
+         * produce a working connection. Some cases (manual logout,
+         * remote invalidation) leave the files present but unusable.
+         * So we wait briefly for the socket to become connected.
          */
 
 if (
@@ -944,32 +950,93 @@ if (
     session.state?.creds?.registered
 ) {
             console.log(
-                `ℹ️ +${phone} already has registered WhatsApp credentials.`
+                `ℹ️ +${phone} has existing WhatsApp credentials; validating before reuse.`
             );
 
-            /*
-             * Start the bot directly because
-             * this instance already has valid
-             * authentication.
-             */
+            // Wait for the socket to open (session.connected set in connection.update)
+            const validated = await new Promise(resolve => {
+                const checkInterval = 500;
+                const timeoutMs = 8000;
+                let waited = 0;
 
-            if (
-                !botProcesses.has(phone)
-            ) {
+                const iv = setInterval(() => {
+                    if (session.connected) {
+                        clearInterval(iv);
+                        resolve(true);
+                        return;
+                    }
+                    waited += checkInterval;
+                    if (waited >= timeoutMs) {
+                        clearInterval(iv);
+                        resolve(false);
+                        return;
+                    }
+                }, checkInterval);
+            });
 
-                launchWhisperBot(
-                    phone,
-                    chatId
+            if (validated) {
+                console.log(
+                    `ℹ️ Stored credentials for +${phone} validated successfully. Reusing session.`
+                );
+
+                /*
+                 * Start the bot directly because
+                 * this instance already has valid
+                 * authentication.
+                 */
+
+                if (
+                    !botProcesses.has(phone)
+                ) {
+
+                    launchWhisperBot(
+                        phone,
+                        chatId
+                    );
+                }
+
+                await sendTelegramMessage(
+                    chatId,
+
+                    `✅ WhatsApp account +${phone} is already linked and validated.\n\n🚀 WhisperBot is starting using the existing WhatsApp session.`
+                );
+
+                return;
+            }
+
+            // If validation failed, the stored credentials are most likely stale.
+            console.log(
+                `⚠️ Stored credentials for +${phone} appear invalid (no successful connection). Removing stale session files and requesting a fresh pairing code.`
+            );
+
+            try {
+                fs.rmSync(
+                    getSessionDir(phone),
+                    {
+                        recursive: true,
+                        force: true
+                    }
+                );
+
+                console.log(
+                    `🧹 Removed stale WhatsApp session files for +${phone}`
+                );
+            } catch (err) {
+                console.error(
+                    `Failed to remove stale WhatsApp session for +${phone}:`,
+                    err
                 );
             }
 
-            await sendTelegramMessage(
-                chatId,
+            // Inform operator and continue into pairing flow below.
+            try {
+                await sendTelegramMessage(
+                    chatId,
+                    `⚠️ The saved WhatsApp session for +${phone} could not be validated (it may have been logged out remotely). I removed the stale session files and will now generate a fresh pairing code for you.`
+                );
+            } catch {}
 
-                `ℹ️ +${phone} is already linked.\n\n🚀 WhisperBot is starting using the existing WhatsApp session.`
-            );
-
-            return;
+            // Continue: do not return — proceed to request a new pairing code.
         }
 
         /*
@@ -1016,7 +1083,9 @@ Code: ${code}
 
 Open WhatsApp → Linked Devices → Link a device → Link with phone number, then enter this code.
 
-⚠️ The code is private. Do not share it.`
+⚠️ The code is private. Do not share it.
+
+Note: If your WhatsApp account was logged out manually on your phone, re-login on the phone first and then use this code to pair. If pairing fails, try /pair ${phone} again.`
             );
         }
 
@@ -1220,128 +1289,4 @@ Example:
         } catch (err) {
 
             console.error(
-                "Telegram polling error:",
-                err.message
-            );
-
-            await new Promise(
-                resolve =>
-                    setTimeout(
-                        resolve,
-                        5000
-                    )
-            );
-        }
-    }
-}
-
-/* =========================
-   MAIN
-========================= */
-
-async function main() {
-
-    console.log(
-        "================================"
-    );
-
-    console.log(
-        "🤖 WhisperBot Pairing Service"
-    );
-
-    console.log(
-        "================================"
-    );
-    console.log(
-        "🔄 Synchronizing WhisperBot source..."
-    );
-
-    syncWhisperBotSource();
-
-    console.log(
-        `Template: ${TEMPLATE_DIR}`
-    );
-
-    console.log(
-        `Instances: ${INSTANCES_DIR}`
-    );
-
-    console.log(
-        "Telegram bot: connected"
-    );
-
-    await pollTelegram();
-}
-
-/* =========================
-   SHUTDOWN
-========================= */
-
-async function shutdown(
-    signal
-) {
-
-    console.log(
-        `\nReceived ${signal}. Shutting down...`
-    );
-
-    /*
-     * Stop pairing sockets.
-     */
-
-    for (
-        const [
-            phone,
-            session
-        ]
-        of sessions
-    ) {
-
-        try {
-
-            session.sock?.ws?.close();
-
-        } catch {}
-
-        console.log(
-            `Closed pairing socket for +${phone}`
-        );
-    }
-
-    /*
-     * Don't kill the actual WhisperBot
-     * processes here unless explicitly
-     * requested. They are independent
-     * runtime processes.
-     */
-
-    process.exit(0);
-}
-
-process.on(
-    "SIGINT",
-    () =>
-        shutdown("SIGINT")
-);
-
-process.on(
-    "SIGTERM",
-    () =>
-        shutdown("SIGTERM")
-);
-
-/* =========================
-   START
-========================= */
-
-main().catch(
-    err => {
-
-        console.error(
-            "FATAL ERROR:",
-            err
-        );
-
-        process.exit(1);
-    }
-);
+                
