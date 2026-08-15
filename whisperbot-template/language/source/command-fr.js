@@ -1,4 +1,8 @@
 module.exports = {
+"block": "Bloquer un utilisateur WhatsApp",
+"unblock": "Débloquer un utilisateur WhatsApp",
+"tag": "Activer ou désactiver la réponse audio aux mentions du propriétaire",
+"add": "Ajouter un membre au groupe",
 "getpp":"Obtenir la photo de profil d'un utilisateur",
 "antilinkaction": "Définir l'action de l'anti-lien.",
 "setbio": "Modifier la bio WhatsApp",

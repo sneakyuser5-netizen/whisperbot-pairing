@@ -439,7 +439,6 @@ async function createWhatsAppSocket(
     sock.ev.on(
         "connection.update",
         async update => {
-
             const {
                 connection,
                 lastDisconnect
@@ -451,119 +450,81 @@ async function createWhatsAppSocket(
              * =========================
              */
 
-            if (
-                connection === "open"
-            ) {
-
-                session.reconnectAttempts =
-                    0;
-
-                session.reconnecting =
-                    false;
-
-                session.connected =
-                    true;
+            if (connection === "open") {
+                session.reconnectAttempts = 0;
+                session.reconnecting = false;
+                session.connected = true;
 
                 console.log(
                     `✅ WhatsApp connected: +${phone}`
                 );
 
-                /*
-                 * Give creds.update a moment to
-                 * finish writing the authentication
-                 * files before starting the actual
-                 * WhisperBot process.
-                 */
-
                 await new Promise(
                     resolve =>
-                        setTimeout(
-                            resolve,
-                            1500
-                        )
+                        setTimeout(resolve, 1500)
                 );
 
                 /*
-                 * If another process was already
-                 * launched, don't launch another.
+                 * If this pairing session was rejected,
+                 * do not continue into the registered
+                 * credentials path.
                  */
-
-                if (
-                    !botProcesses.has(phone)
-                ) {
-
-                    try {
-
-                        launchWhisperBot(
-                            phone,
-                            session.chatId
-                        );
-
-                    } catch (err) {
-
-                        console.error(
-                            `WhisperBot launch error for +${phone}:`,
-                            err
-                        );
-
-                        try {
-
-                            await sendTelegramMessage(
-                                session.chatId,
-
-                                `❌ WhatsApp was linked successfully, but WhisperBot could not be started for +${phone}.`
-                            );
-
-                        } catch {}
-
-                        return;
-                    }
-
+                if (session.pairingInvalidated) {
+                    return;
                 }
 
                 /*
-                 * Tell the Telegram user that
-                 * the actual bot is now starting.
+                 * If another process was already launched,
+                 * don't launch another.
                  */
+                if (
+                    session.state?.creds?.registered
+                ) {
+                    if (!botProcesses.has(phone)) {
+                        try {
+                            launchWhisperBot(
+                                phone,
+                                session.chatId
+                            );
+                        } catch (err) {
+                            console.error(
+                                `WhisperBot launch error for +${phone}:`,
+                                err
+                            );
 
-                try {
+                            try {
+                                await sendTelegramMessage(
+                                    session.chatId,
+                                    `❌ WhatsApp was linked successfully, but WhisperBot could not be started for +${phone}.`
+                                );
+                            } catch {}
 
-                    await sendTelegramMessage(
-                        session.chatId,
+                            return;
+                        }
+                    }
 
-                        `✅ WhatsApp account +${phone} is linked successfully.\n\n🚀 WhisperBot is now starting on this WhatsApp account.`
+                    try {
+                        await sendTelegramMessage(
+                            session.chatId,
+                            `✅ WhatsApp account +${phone} is linked successfully.\n\n🚀 WhisperBot is now starting on this WhatsApp account.`
+                        );
+                    } catch {}
+
+                    /*
+                     * The temporary pairing socket is no
+                     * longer needed after the real bot starts.
+                     */
+                    setTimeout(
+                        () => {
+                            try {
+                                session.sock?.ws?.close();
+                            } catch {}
+                        },
+                        2000
                     );
 
-                } catch {}
-
-                /*
-                 * The temporary pairing socket
-                 * is no longer needed.
-                 *
-                 * The real WhisperBot process now
-                 * owns the same authentication.
-                 */
-
-                setTimeout(
-                    async () => {
-
-                        try {
-
-                            await sock.logout
-                                ? null
-                                : null;
-
-                        } catch {}
-
-                        try {
-
-                            sock.ws?.close();
-
-                        } catch {}
-
-                    },
-                    2000
-                );
+                    return;
+                }
 
                 return;
             }
@@ -574,38 +535,30 @@ async function createWhatsAppSocket(
              * =========================
              */
 
-            if (
-                connection !== "close"
-            ) {
+            if (connection !== "close") {
                 return;
             }
 
-            session.connected =
-                false;
+            session.connected = false;
 
             const error =
                 lastDisconnect?.error;
 
             const statusCode =
-                error
-                    ?.output
-                    ?.statusCode;
+                error?.output?.statusCode;
 
             console.log(
                 `WhatsApp session closed: +${phone} (${statusCode})`
             );
 
             if (error) {
-
                 console.log(
                     "WhatsApp error details:",
                     JSON.stringify(
                         {
                             statusCode,
-                            data:
-                                error?.data,
-                            message:
-                                error?.message
+                            data: error?.data,
+                            message: error?.message
                         },
                         null,
                         2
@@ -614,49 +567,64 @@ async function createWhatsAppSocket(
             }
 
             /*
-             * If the actual WhisperBot is already
-             * running, the pairing socket closing
-             * is expected. Do NOT restart pairing.
+             * If the real WhisperBot is already running,
+             * the temporary pairing socket closing is expected.
              */
-
-            if (
-                botProcesses.has(phone)
-            ) {
-
+            if (botProcesses.has(phone)) {
                 console.log(
                     `Pairing socket closed after WhisperBot launch for +${phone}`
                 );
-
                 return;
             }
 
             /*
              * =========================
-             * LOGGED OUT
+             * LOGGED OUT / REJECTED
              * =========================
+             *
+             * 401 / loggedOut means the authentication
+             * state must NOT be reconnected.
+             *
+             * Remove the stale session so the next
+             * /pair request starts completely fresh.
              */
 
             if (
                 statusCode ===
                 DisconnectReason.loggedOut
             ) {
-
                 console.log(
                     `❌ WhatsApp logged out/rejected +${phone}`
                 );
 
-                sessions.delete(
-                    phone
-                );
+                session.pairingInvalidated = true;
 
                 try {
-
-                    await sendTelegramMessage(
-                        session.chatId,
-
-                        `❌ WhatsApp rejected the pairing session for +${phone}. Please request a new pairing code.`
+                    fs.rmSync(
+                        getSessionDir(phone),
+                        {
+                            recursive: true,
+                            force: true
+                        }
                     );
 
+                    console.log(
+                        `🧹 Removed stale WhatsApp session for +${phone}`
+                    );
+                } catch (err) {
+                    console.error(
+                        `Failed to remove stale WhatsApp session for +${phone}:`,
+                        err
+                    );
+                }
+
+                sessions.delete(phone);
+
+                try {
+                    await sendTelegramMessage(
+                        session.chatId,
+                        `❌ WhatsApp session for +${phone} was rejected. The old session was removed. Send /pair ${phone} to receive a new pairing code.`
+                    );
                 } catch {}
 
                 return;
@@ -664,7 +632,7 @@ async function createWhatsAppSocket(
 
             /*
              * =========================
-             * 515 RESTART REQUIRED
+             * RESTART REQUIRED
              * =========================
              */
 
@@ -672,7 +640,6 @@ async function createWhatsAppSocket(
                 statusCode ===
                 DisconnectReason.restartRequired
             ) {
-
                 console.log(
                     `🔄 WhatsApp requested socket restart for +${phone}`
                 );
@@ -930,7 +897,8 @@ async function createPairingSession(
 
         pairingCodeSent: false,
 
-        reconnectAttempts: 0
+reconnectAttempts: 0,
+pairingInvalidated: false
     };
 
     sessions.set(
@@ -971,10 +939,10 @@ async function createPairingSession(
          * don't request a pairing code.
          */
 
-        if (
-            session.state?.creds?.registered
-        ) {
-
+if (
+    !session.pairingInvalidated &&
+    session.state?.creds?.registered
+) {
             console.log(
                 `ℹ️ +${phone} already has registered WhatsApp credentials.`
             );

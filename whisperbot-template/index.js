@@ -41,11 +41,8 @@ console.log = (...args) => {
 async function startBot() {
     try {
     
-const sessionDir =
-    process.env.WHISPERBOT_SESSION_DIR || "./session";
+    const { state, saveCreds } = await useMultiFileAuthState("./session");
 
-const { state, saveCreds } =
-    await useMultiFileAuthState(sessionDir);
         const sock = makeWASocket({
             auth: state,
             printQRInTerminal: false,
