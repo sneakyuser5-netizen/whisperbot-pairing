@@ -567,28 +567,10 @@ async function createWhatsAppSocket(
             }
 
             /*
-             * If the real WhisperBot is already running,
-             * the temporary pairing socket closing is expected.
+             * If this is a loggedOut event, perform full cleanup.
+             * This must run even if a real WhisperBot process exists,
+             * because logged out means credentials are invalid.
              */
-            if (botProcesses.has(phone)) {
-                console.log(
-                    `Pairing socket closed after WhisperBot launch for +${phone}`
-                );
-                return;
-            }
-
-            /*
-             * =========================
-             * LOGGED OUT / REJECTED
-             * =========================
-             *
-             * 401 / loggedOut means the authentication
-             * state must NOT be reconnected.
-             *
-             * Remove the stale session so the next
-             * /pair request starts completely fresh.
-             */
-
             if (
                 statusCode ===
                 DisconnectReason.loggedOut
@@ -598,6 +580,30 @@ async function createWhatsAppSocket(
                 );
 
                 session.pairingInvalidated = true;
+
+                // If the real WhisperBot process is running, terminate it.
+                const child = botProcesses.get(phone);
+
+                if (child) {
+                    try {
+                        console.log(
+                            `🛑 Terminating WhisperBot process for +${phone} (PID ${child.pid}) due to loggedOut.`
+                        );
+
+                        // Try graceful shutdown first
+                        child.kill();
+                    } catch (err) {
+                        console.error(
+                            `Failed to terminate WhisperBot process for +${phone}:`,
+                            err
+                        );
+                    }
+
+                    // Remove from map immediately to avoid races
+                    if (botProcesses.get(phone) === child) {
+                        botProcesses.delete(phone);
+                    }
+                }
 
                 try {
                     fs.rmSync(
@@ -618,16 +624,28 @@ async function createWhatsAppSocket(
                     );
                 }
 
+                // Remove pairing controller state for this phone
                 sessions.delete(phone);
 
                 try {
                     // Improved feedback message
                     await sendTelegramMessage(
                         session.chatId,
-                        `❌ WhatsApp session for +${phone} was rejected by WhatsApp (likely logged out remotely). I removed the saved session files for this instance. To link again, request a new code with /pair ${phone}. If you recently logged out from WhatsApp, re-login on your phone first before pairing.`
+                        `❌ WhatsApp session for +${phone} was rejected by WhatsApp (likely logged out remotely). I removed the saved session files for this instance and stopped any running WhisperBot instance. To link again, run /pair ${phone} again and follow the pairing steps.`
                     );
                 } catch {}
 
+                return;
+            }
+
+            /*
+             * If the real WhisperBot is already running,
+             * the temporary pairing socket closing is expected.
+             */
+            if (botProcesses.has(phone)) {
+                console.log(
+                    `Pairing socket closed after WhisperBot launch for +${phone}`
+                );
                 return;
             }
 
@@ -1033,7 +1051,7 @@ if (
             try {
                 await sendTelegramMessage(
                     chatId,
-                    `⚠️ The saved WhatsApp session for +${phone} could not be validated (it may have been logged out remotely). I removed the stale session files and will now generate a fresh pairing code for you.`
+                    `⚠️ The saved WhatsApp session for +${phone} could not be validated (it may have been logged out remotely). I removed the stale session files and will now generate a fres[...]
                 );
             } catch {}
 
@@ -1316,7 +1334,7 @@ async function main() {
     );
 
     console.log(
-        "🤖 WhisperBot Pairing Service"
+        "�🤖 WhisperBot Pairing Service"
     );
 
     console.log(
