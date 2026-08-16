@@ -1,4 +1,4 @@
-
+// https://github.com/sneakyuser5-netizen/whisperbot-pairing/blob/fix/pairing-auth-detection/index.js
 require("dotenv").config();
 
 const {
@@ -599,6 +599,25 @@ async function createWhatsAppSocket(
 
                 session.pairingInvalidated = true;
 
+                // If a WhisperBot process exists for this phone, stop it.
+                const child = botProcesses.get(phone);
+                if (child) {
+                    try {
+                        if (!child.killed) {
+                            child.kill("SIGTERM");
+                        }
+                    } catch (err) {}
+
+                    // Remove from map only if it's the same child reference
+                    if (botProcesses.get(phone) === child) {
+                        botProcesses.delete(phone);
+                    }
+
+                    console.log(
+                        `🛑 Stopped WhisperBot process for +${phone}`
+                    );
+                }
+
                 try {
                     fs.rmSync(
                         getSessionDir(phone),
@@ -621,9 +640,10 @@ async function createWhatsAppSocket(
                 sessions.delete(phone);
 
                 try {
+                    // Improved feedback message
                     await sendTelegramMessage(
                         session.chatId,
-                        `❌ WhatsApp session for +${phone} was rejected. The old session was removed. Send /pair ${phone} to receive a new pairing code.`
+                        `❌ WhatsApp session for +${phone} was rejected by WhatsApp (likely logged out remotely). I removed the saved session files for this instance and stopped any running WhisperBot process. To link again, run /pair ${phone} and follow the pairing steps.`
                     );
                 } catch {}
 
@@ -937,6 +957,12 @@ pairingInvalidated: false
         /*
          * If the account is already registered,
          * don't request a pairing code.
+         *
+         * IMPORTANT:
+         * We must validate that the stored credentials actually
+         * produce a working connection. Some cases (manual logout,
+         * remote invalidation) leave the files present but unusable.
+         * So we wait briefly for the socket to become connected.
          */
 
 if (
@@ -944,32 +970,93 @@ if (
     session.state?.creds?.registered
 ) {
             console.log(
-                `ℹ️ +${phone} already has registered WhatsApp credentials.`
+                `ℹ️ +${phone} has existing WhatsApp credentials; validating before reuse.`
             );
 
-            /*
-             * Start the bot directly because
-             * this instance already has valid
-             * authentication.
-             */
+            // Wait for the socket to open (session.connected set in connection.update)
+            const validated = await new Promise(resolve => {
+                const checkInterval = 500;
+                const timeoutMs = 8000;
+                let waited = 0;
 
-            if (
-                !botProcesses.has(phone)
-            ) {
+                const iv = setInterval(() => {
+                    if (session.connected) {
+                        clearInterval(iv);
+                        resolve(true);
+                        return;
+                    }
+                    waited += checkInterval;
+                    if (waited >= timeoutMs) {
+                        clearInterval(iv);
+                        resolve(false);
+                        return;
+                    }
+                }, checkInterval);
+            });
 
-                launchWhisperBot(
-                    phone,
-                    chatId
+            if (validated) {
+                console.log(
+                    `ℹ️ Stored credentials for +${phone} validated successfully. Reusing session.`
+                );
+
+                /*
+                 * Start the bot directly because
+                 * this instance already has valid
+                 * authentication.
+                 */
+
+                if (
+                    !botProcesses.has(phone)
+                ) {
+
+                    launchWhisperBot(
+                        phone,
+                        chatId
+                    );
+                }
+
+                await sendTelegramMessage(
+                    chatId,
+
+                    `✅ WhatsApp account +${phone} is already linked and validated.\n\n🚀 WhisperBot is starting using the existing WhatsApp session.`
+                );
+
+                return;
+            }
+
+            // If validation failed, the stored credentials are most likely stale.
+            console.log(
+                `⚠️ Stored credentials for +${phone} appear invalid (no successful connection). Removing stale session files and requesting a fresh pairing code.`
+            );
+
+            try {
+                fs.rmSync(
+                    getSessionDir(phone),
+                    {
+                        recursive: true,
+                        force: true
+                    }
+                );
+
+                console.log(
+                    `🧹 Removed stale WhatsApp session files for +${phone}`
+                );
+            } catch (err) {
+                console.error(
+                    `Failed to remove stale WhatsApp session for +${phone}:`,
+                    err
                 );
             }
 
-            await sendTelegramMessage(
-                chatId,
+            // Inform operator and continue into pairing flow below.
+            try {
+                await sendTelegramMessage(
+                    chatId,
+                    `⚠️ The saved WhatsApp session for +${phone} could not be validated (it may have been logged out remotely). I removed the stale session files and will now generate a fresh pairing code. Please run /pair ${phone} again and follow the pairing steps.`
+                );
+            } catch {}
 
-                `ℹ️ +${phone} is already linked.\n\n🚀 WhisperBot is starting using the existing WhatsApp session.`
-            );
-
-            return;
+            // Continue: do not return — proceed to request a new pairing code.
         }
 
         /*
@@ -1016,7 +1103,9 @@ Code: ${code}
 
 Open WhatsApp → Linked Devices → Link a device → Link with phone number, then enter this code.
 
-⚠️ The code is private. Do not share it.`
+⚠️ The code is private. Do not share it.
+
+Note: If your WhatsApp account was logged out manually on your phone, re-login on the phone first and then use this code to pair. If pairing fails, try /pair ${phone} again.`
             );
         }
 
