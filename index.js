@@ -1449,6 +1449,153 @@ Your WhatsApp account will be linked and a personal WhisperBot instance will sta
 
                     continue;
                 }
+/*
+ * =========================
+ * DELETE PAIRING SESSION
+ * =========================
+ *
+ * Emergency reset for a stuck pairing session.
+ *
+ * Usage:
+ * /deletesession 237XXXXXXXXX
+ *
+ * This removes only the pairing/authentication
+ * state. It does NOT stop a running WhisperBot.
+ */
+
+if (
+    text === "/deletesession" ||
+    text.startsWith("/deletesession ")
+) {
+
+    const parts =
+        text.split(/\s+/);
+
+    const phone =
+        normalizePhone(parts[1]);
+
+    if (!phone) {
+
+        await sendTelegramMessage(
+            chatId,
+
+            `📌 Usage:
+
+/deletesession 237XXXXXXXXX
+
+Example:
+/deletesession 237682349827`
+        );
+
+        continue;
+    }
+
+    /*
+     * NEVER delete the session of a bot
+     * that is currently running.
+     */
+    if (
+        botProcesses.has(phone)
+    ) {
+
+        await sendTelegramMessage(
+            chatId,
+
+            `⚠️ WhisperBot is currently running for +${phone}.
+
+The active bot was NOT touched.`
+        );
+
+        continue;
+    }
+
+    const existingSession =
+        sessions.get(phone);
+
+    /*
+     * If a pairing session exists,
+     * close its WhatsApp socket first.
+     */
+    if (
+        existingSession?.sock
+    ) {
+
+        try {
+
+            existingSession.sock.ws?.close();
+
+        } catch (err) {
+
+            console.log(
+                `Pairing socket close warning for +${phone}:`,
+                err.message
+            );
+
+        }
+    }
+
+    /*
+     * Remove the in-memory pairing session.
+     */
+    sessions.delete(
+        phone
+    );
+
+    /*
+     * Remove the WhatsApp authentication
+     * directory.
+     */
+    try {
+
+        fs.rmSync(
+            getSessionDir(phone),
+            {
+                recursive: true,
+                force: true
+            }
+        );
+
+    } catch (err) {
+
+        console.error(
+            `Failed to remove WhatsApp session for +${phone}:`,
+            err
+        );
+
+    }
+
+    /*
+     * Remove any stale logout marker.
+     */
+    try {
+
+        fs.rmSync(
+            getLogoutMarkerPath(phone),
+            {
+                force: true
+            }
+        );
+
+    } catch {}
+
+    console.log(
+        `🧹 Pairing session manually deleted for +${phone}`
+    );
+
+    await sendTelegramMessage(
+        chatId,
+
+        `✅ Pairing session deleted for +${phone}.
+
+🧹 Old WhatsApp authentication was removed.
+
+You can now request a fresh pairing code with:
+
+/pair ${phone}`
+    );
+
+    continue;
+}
 
                 /*
                  * =========================
