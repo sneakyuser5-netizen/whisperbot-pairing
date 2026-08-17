@@ -119,6 +119,25 @@ console.log(
             instanceDir,
             "session"
         );
+/*
+ * The child WhisperBot writes this marker when WhatsApp
+ * reports DisconnectReason.loggedOut (401).
+ *
+ * Keep it OUTSIDE the session directory because the
+ * session directory itself is deleted on logout.
+ */
+const logoutMarker =
+    path.join(
+        instanceDir,
+        ".whisperbot-logged-out"
+    );
+
+try {
+    fs.rmSync(
+        logoutMarker,
+        { force: true }
+    );
+} catch {}
 
     fs.mkdirSync(
         sessionDir,
@@ -133,13 +152,16 @@ console.log(
      * belongs to this instance.
      */
     const env = {
-        ...process.env,
+    ...process.env,
 
-        WHISPERBOT_PHONE: phone,
+    WHISPERBOT_PHONE: phone,
 
-        WHISPERBOT_SESSION_DIR:
-            sessionDir
-    };
+    WHISPERBOT_SESSION_DIR:
+        sessionDir,
+
+    WHISPERBOT_LOGOUT_MARKER:
+        logoutMarker
+};
 
     console.log(
         `🚀 Starting WhisperBot instance for +${phone}`

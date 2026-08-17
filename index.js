@@ -318,15 +318,36 @@ function launchWhisperBot(
         ) => {
 
             /*
-             * Only remove this exact
-             * child from the map.
+             * Check whether the WhisperBot child
+             * reported a real WhatsApp logout.
+             *
+             * The child writes this marker when
+             * Baileys receives DisconnectReason.loggedOut.
+             */
+
+            const instanceDir =
+                getInstanceDir(phone);
+
+            const logoutMarker =
+                path.join(
+                    instanceDir,
+                    ".whisperbot-logged-out"
+                );
+
+            const wasLoggedOut =
+                fs.existsSync(
+                    logoutMarker
+                );
+
+            /*
+             * Only remove this exact child
+             * from the process map.
              */
 
             if (
                 botProcesses.get(phone) ===
                 child
             ) {
-
                 botProcesses.delete(
                     phone
                 );
@@ -337,8 +358,100 @@ function launchWhisperBot(
             );
 
             /*
-             * Don't immediately spam Telegram
-             * if the process stops normally.
+             * =========================
+             * REAL WHATSAPP LOGOUT
+             * =========================
+             */
+
+            if (
+                wasLoggedOut
+            ) {
+
+                console.log(
+                    `🧹 WhisperBot reported WhatsApp logout for +${phone}`
+                );
+
+                /*
+                 * Remove the marker so a future
+                 * normal process exit is not treated
+                 * as a logout.
+                 */
+
+                try {
+
+                    fs.rmSync(
+                        logoutMarker,
+                        {
+                            force: true
+                        }
+                    );
+
+                } catch {}
+
+                /*
+                 * Remove the WhatsApp authentication
+                 * directory one more time as a safety net.
+                 */
+
+                try {
+
+                    fs.rmSync(
+                        getSessionDir(phone),
+                        {
+                            recursive: true,
+                            force: true
+                        }
+                    );
+
+                    console.log(
+                        `🧹 Removed WhatsApp session for +${phone}`
+                    );
+
+                } catch (err) {
+
+                    console.error(
+                        `Failed to remove WhatsApp session for +${phone}:`,
+                        err
+                    );
+                }
+
+                /*
+                 * THIS IS THE IMPORTANT FIX.
+                 *
+                 * The Telegram/pairing session must
+                 * also be removed.
+                 *
+                 * Otherwise /pair sees the old
+                 * session and says:
+                 *
+                 * "pairing session is already active"
+                 */
+
+                sessions.delete(
+                    phone
+                );
+
+                console.log(
+                    `🧹 Cleared pairing session for +${phone}`
+                );
+
+                try {
+
+                    await sendTelegramMessage(
+                        chatId,
+
+                        `❌ WhatsApp logged out for +${phone}.\n\n🧹 The old session was cleared. You can now use /pair ${phone} to link it again.`
+                    );
+
+                } catch {}
+
+                return;
+            }
+
+            /*
+             * =========================
+             * NORMAL / UNEXPECTED EXIT
+             * =========================
              */
 
             if (
@@ -358,7 +471,6 @@ function launchWhisperBot(
             }
         }
     );
-
     return child;
 }
 
@@ -567,16 +679,147 @@ async function createWhatsAppSocket(
             }
 
             /*
-             * If the real WhisperBot is already running,
-             * the temporary pairing socket closing is expected.
+             * =========================
+             * LOGGED OUT / REJECTED
+             * =========================
+             *
+             * 401 / loggedOut means the
+             * WhatsApp authentication is dead.
+             *
+             * IMPORTANT:
+             * This check MUST happen BEFORE
+             * botProcesses.has(phone).
              */
-            if (botProcesses.has(phone)) {
+
+            if (
+                statusCode ===
+                DisconnectReason.loggedOut
+            ) {
+
                 console.log(
-                    `Pairing socket closed after WhisperBot launch for +${phone}`
+                    `❌ WhatsApp logged out/rejected +${phone}`
                 );
+
+                session.pairingInvalidated =
+                    true;
+
+                /*
+                 * Stop the real WhisperBot process
+                 * if it is still running.
+                 */
+
+                const child =
+                    botProcesses.get(
+                        phone
+                    );
+
+                if (
+                    child
+                ) {
+
+                    try {
+
+                        if (
+                            !child.killed
+                        ) {
+                            child.kill(
+                                "SIGTERM"
+                            );
+                        }
+
+                    } catch {}
+
+                    if (
+                        botProcesses.get(
+                            phone
+                        ) === child
+                    ) {
+
+                        botProcesses.delete(
+                            phone
+                        );
+                    }
+
+                    console.log(
+                        `🛑 Stopped WhisperBot process for +${phone}`
+                    );
+                }
+
+                /*
+                 * Remove the WhatsApp authentication.
+                 */
+
+                try {
+
+                    fs.rmSync(
+                        getSessionDir(phone),
+                        {
+                            recursive: true,
+                            force: true
+                        }
+                    );
+
+                    console.log(
+                        `🧹 Removed stale WhatsApp session for +${phone}`
+                    );
+
+                } catch (err) {
+
+                    console.error(
+                        `Failed to remove stale WhatsApp session for +${phone}:`,
+                        err
+                    );
+                }
+
+                /*
+                 * MOST IMPORTANT:
+                 * Clear the pairing-service state.
+                 */
+
+                sessions.delete(
+                    phone
+                );
+
+                console.log(
+                    `🧹 Cleared pairing session for +${phone}`
+                );
+
+                try {
+
+                    await sendTelegramMessage(
+                        session.chatId,
+
+                        `❌ WhatsApp session for +${phone} was logged out/rejected.\n\n🧹 The old session has been removed. You can now use /pair ${phone} again.`
+                    );
+
+                } catch {}
+
                 return;
             }
 
+            /*
+             * If the real WhisperBot is already running,
+             * the temporary pairing socket closing is expected.
+             *
+             * This MUST come AFTER the 401 check above.
+             */
+
+            if (
+                botProcesses.has(phone)
+            ) {
+
+                console.log(
+                    `Pairing socket closed after WhisperBot launch for +${phone}`
+                );
+
+                return;
+            }
+
+            /*
+             * =========================
+             * RESTART REQUIRED
+             * =========================
+             */
             /*
              * =========================
              * LOGGED OUT / REJECTED
