@@ -1381,6 +1381,59 @@ Note: If your WhatsApp account was logged out manually on your phone, re-login o
 
 let telegramOffset = 0;
 
+/*
+ * Force Join configuration
+ */
+const FORCE_JOIN_GROUP_ID =
+    -1003987270375;
+
+const FORCE_JOIN_LINK =
+    "https://t.me/whisperer_bot_pairing";
+
+/*
+ * Telegram owner/admin.
+ *
+ * This account is never blocked by Force Join.
+ */
+const TELEGRAM_OWNER_ID =
+    8522227392;
+async function isUserInRequiredGroup(
+    userId
+) {
+
+    try {
+
+        const member =
+            await telegram(
+                "getChatMember",
+                {
+                    chat_id:
+                        FORCE_JOIN_GROUP_ID,
+
+                    user_id:
+                        userId
+                }
+            );
+
+        const status =
+            member?.status;
+
+        return [
+            "creator",
+            "administrator",
+            "member"
+        ].includes(status);
+
+    } catch (err) {
+
+        console.error(
+            "Force join check failed:",
+            err
+        );
+
+        return false;
+    }
+}
 async function pollTelegram() {
 
     while (true) {
@@ -1418,8 +1471,64 @@ async function pollTelegram() {
                 const chatId =
                     message.chat.id;
 
-                const text =
-                    message.text.trim();
+const text =
+    message.text.trim();
+/*
+ * =========================
+ * FORCE JOIN CHECK
+ * =========================
+ *
+ * Private users must be members of
+ * WhisperBotOfficial before using
+ * the pairing service.
+ */
+
+if (
+    message.chat.type === "private" &&
+    message.from.id !== TELEGRAM_OWNER_ID
+) {
+    const isMember =
+        await isUserInRequiredGroup(
+            message.from.id
+        );
+
+    if (!isMember) {
+
+        await telegram(
+            "sendMessage",
+            {
+                chat_id: chatId,
+
+                text:
+                    `🔒 *WhisperBotOfficial membership required*\n\n` +
+                    `You must join our Telegram group before using WhisperBot.\n\n` +
+                    `1️⃣ Join the group using the button below.\n` +
+                    `2️⃣ Return here.\n` +
+                    `3️⃣ Send /pair again.`,
+
+                parse_mode:
+                    "Markdown",
+
+                reply_markup:
+                    {
+                        inline_keyboard: [
+                            [
+                                {
+                                    text:
+                                        "🥷 Join WhisperBotOfficial",
+
+                                    url:
+                                        FORCE_JOIN_LINK
+                                }
+                            ]
+                        ]
+                    }
+            }
+        );
+
+        continue;
+    }
+}
 
                 /*
                  * =========================
